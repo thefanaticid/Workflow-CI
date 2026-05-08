@@ -1,0 +1,172 @@
+name: ML Training CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      n_estimators:
+        description: "Jumlah estimator GBR"
+        default: "300"
+      learning_rate:
+        description: "Learning rate GBR"
+        default: "0.1"
+      max_depth:
+        description: "Max depth GBR"
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  train-and-deploy:
+    name: Train → Artifact → Docker
+    runs-on: ubuntu-latest
+    env:
+      DAGSHUB_REPO_OWNER: thefanaticid
+      DAGSHUB_REPO_NAME: Workflow-CI
+      DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+      MLFLOW_TRACKING_USERNAME: thefanaticid
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Python 3.12.7 + pip cache
+      # ------------------------------------------------------------------
+      - name: Set up Python 3.12.7
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.7"
+          cache: pip
+
+      # ------------------------------------------------------------------
+      # 3. Install dependencies (dari conda.yaml — pip section)
+      # ------------------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "mlflow==2.19.0" \
+            "dagshub==0.7.0" \
+            "scikit-learn==1.5.2" \
+            "pandas==2.2.3" \
+            "numpy==1.26.4" \
+            "matplotlib==3.9.2" \
+            "joblib==1.4.2"
+
+      # ------------------------------------------------------------------
+      # 4. Init DagsHub tracking URI (set MLFLOW_TRACKING_URI)
+      # ------------------------------------------------------------------
+      - name: Configure DagsHub MLflow tracking URI
+        run: |
+          python - <<'EOF'
+          import dagshub, os
+          owner = os.environ["DAGSHUB_REPO_OWNER"]
+          name  = os.environ["DAGSHUB_REPO_NAME"]
+          token = os.environ["DAGSHUB_TOKEN"]
+          os.environ["MLFLOW_TRACKING_USERNAME"] = owner
+          os.environ["MLFLOW_TRACKING_PASSWORD"] = token
+          dagshub.init(repo_owner=owner, repo_name=name, mlflow=True)
+          import mlflow
+          uri = mlflow.get_tracking_uri()
+          print(f"MLFLOW_TRACKING_URI={uri}")
+          # Write to GITHUB_ENV so subsequent steps inherit
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"MLFLOW_TRACKING_URI={uri}\n")
+          EOF
+
+      # ------------------------------------------------------------------
+      # 5. Run MLflow Project
+      # ------------------------------------------------------------------
+      - name: Run MLflow Project
+        id: mlflow_run
+        run: |
+          N_EST="${{ github.event.inputs.n_estimators || '300' }}"
+          LR="${{ github.event.inputs.learning_rate || '0.1' }}"
+          DEPTH="${{ github.event.inputs.max_depth || '5' }}"
+
+          # mlflow run dengan env-manager=local (pakai pip env yang sudah diinstall)
+          OUTPUT=$(mlflow run MLProject/ \
+            --env-manager=local \
+            --experiment-name california-housing-ci \
+            -P n_estimators=${N_EST} \
+            -P learning_rate=${LR} \
+            -P max_depth=${DEPTH} \
+            2>&1)
+
+          echo "$OUTPUT"
+
+          # Ekstrak run_id dari baris MLFLOW_RUN_ID=<id>
+          RUN_ID=$(echo "$OUTPUT" | grep "MLFLOW_RUN_ID=" | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+          echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
+          echo "Captured Run ID: ${RUN_ID}"
+
+      # ------------------------------------------------------------------
+      # 6. Upload MLflow artifacts ke GitHub
+      # ------------------------------------------------------------------
+      - name: Upload MLflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlflow-artifacts-${{ github.run_number }}
+          path: mlruns/
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # 7. Build Docker image dari model MLflow
+      # ------------------------------------------------------------------
+      - name: Build Docker image
+        run: |
+          RUN_ID="${{ steps.mlflow_run.outputs.run_id }}"
+          IMAGE_NAME="thefanaticid/california-housing-gbr"
+          echo "Building Docker image: ${IMAGE_NAME}"
+          echo "From run: runs:/${RUN_ID}/model"
+          mlflow models build-docker \
+            -m "runs:/${RUN_ID}/model" \
+            -n "${IMAGE_NAME}" \
+            --enable-mlserver
+
+      # ------------------------------------------------------------------
+      # 8. Login & Push Docker Hub
+      # ------------------------------------------------------------------
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag & push Docker image
+        run: |
+          IMAGE_NAME="thefanaticid/california-housing-gbr"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          docker tag "${IMAGE_NAME}" "${IMAGE_NAME}:${SHORT_SHA}"
+          docker tag "${IMAGE_NAME}" "${IMAGE_NAME}:latest"
+          docker push "${IMAGE_NAME}:${SHORT_SHA}"
+          docker push "${IMAGE_NAME}:latest"
+          echo "Pushed: ${IMAGE_NAME}:${SHORT_SHA} dan ${IMAGE_NAME}:latest"
+
+      # ------------------------------------------------------------------
+      # 9. Summary run
+      # ------------------------------------------------------------------
+      - name: Write job summary
+        if: always()
+        run: |
+          RUN_ID="${{ steps.mlflow_run.outputs.run_id }}"
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## ML Training CI Summary
+          | Key | Value |
+          |---|---|
+          | MLflow Run ID | \`${RUN_ID}\` |
+          | Experiment | california-housing-ci |
+          | DagsHub Repo | [thefanaticid/Workflow-CI](https://dagshub.com/thefanaticid/Workflow-CI) |
+          | Docker Image | \`thefanaticid/california-housing-gbr:latest\` |
+          | GitHub Run | #${{ github.run_number }} |
+          EOF

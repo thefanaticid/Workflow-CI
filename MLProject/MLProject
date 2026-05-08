@@ -1,0 +1,26 @@
+name: california-housing-gbr
+
+conda_env: conda.yaml
+
+entry_points:
+  main:
+    parameters:
+      n_estimators:
+        type: int
+        default: 300
+      learning_rate:
+        type: float
+        default: 0.1
+      max_depth:
+        type: int
+        default: 5
+      cv_folds:
+        type: int
+        default: 3
+      data_dir:
+        type: str
+        default: "../housing_preprocessing"
+      experiment_name:
+        type: str
+        default: "california-housing-ci"
+    command: "python3 modelling.py --n-estimators {n_estimators} --learning-rate {learning_rate} --max-depth {max_depth} --cv-folds {cv_folds} --data-dir {data_dir} --experiment-name {experiment_name}"
