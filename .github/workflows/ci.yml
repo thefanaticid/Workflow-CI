@@ -121,16 +121,19 @@ jobs:
       # ------------------------------------------------------------------
       # 7. Build Docker image dari model MLflow (download dari DagsHub)
       # ------------------------------------------------------------------
-      - name: Build Docker image
+      - name: Download model artifact
         run: |
           RUN_ID="${{ steps.mlflow_run.outputs.run_id }}"
+          echo "Downloading model for run: ${RUN_ID}"
+          mlflow artifacts download \
+            --artifact-uri "runs:/${RUN_ID}/model" \
+            --dst-path mlflow_model/
+
+      - name: Build Docker image
+        run: |
           IMAGE_NAME="thefanaticid/california-housing-gbr"
           echo "Building Docker image: ${IMAGE_NAME}"
-          echo "From run: runs:/${RUN_ID}/model"
-          # Tanpa --enable-mlserver: pakai pyfunc server default (Python 3.10+ compatible)
-          mlflow models build-docker \
-            -m "runs:/${RUN_ID}/model" \
-            -n "${IMAGE_NAME}"
+          docker build -t "${IMAGE_NAME}" .
 
       # ------------------------------------------------------------------
       # 8. Login & Push Docker Hub
