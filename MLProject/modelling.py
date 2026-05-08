@@ -49,27 +49,13 @@ def load_dataset(data_dir: Path):
 
 
 def configure_tracking(experiment_name: str) -> None:
-    explicit_uri = os.getenv("MLFLOW_TRACKING_URI")
-    repo_owner = os.getenv("DAGSHUB_REPO_OWNER")
-    repo_name = os.getenv("DAGSHUB_REPO_NAME")
-    token = os.getenv("DAGSHUB_TOKEN")
-
-    if explicit_uri:
-        mlflow.set_tracking_uri(explicit_uri)
-        LOGGER.info("Tracking URI: %s", explicit_uri)
-    elif repo_owner and repo_name and token:
-        try:
-            import dagshub
-            os.environ["MLFLOW_TRACKING_USERNAME"] = repo_owner
-            os.environ["MLFLOW_TRACKING_PASSWORD"] = token
-            dagshub.init(repo_owner=repo_owner, repo_name=repo_name, mlflow=True)
-            LOGGER.info("DagsHub: %s/%s", repo_owner, repo_name)
-        except Exception as exc:
-            LOGGER.warning("DagsHub gagal (%s) — fallback lokal", exc)
-            mlflow.set_tracking_uri("file:./mlruns")
+    uri = os.getenv("MLFLOW_TRACKING_URI")
+    if uri:
+        mlflow.set_tracking_uri(uri)
+        LOGGER.info("Tracking URI: %s", uri)
     else:
         mlflow.set_tracking_uri("file:./mlruns")
-        LOGGER.info("MLflow lokal: file:./mlruns")
+        LOGGER.info("MLFLOW_TRACKING_URI tidak diset, pakai lokal: file:./mlruns")
 
     mlflow.set_experiment(experiment_name)
 

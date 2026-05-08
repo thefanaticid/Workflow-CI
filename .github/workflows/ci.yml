@@ -25,9 +25,8 @@ jobs:
     name: Train → Artifact → Docker
     runs-on: ubuntu-latest
     env:
-      DAGSHUB_REPO_OWNER: thefanaticid
-      DAGSHUB_REPO_NAME: Workflow-CI
-      DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+      # DagsHub MLflow endpoint langsung — tidak perlu dagshub SDK / dagshub.init()
+      MLFLOW_TRACKING_URI: https://dagshub.com/thefanaticid/Workflow-CI.mlflow
       MLFLOW_TRACKING_USERNAME: thefanaticid
       MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
 
@@ -56,24 +55,17 @@ jobs:
           pip install -r requirements.txt
 
       # ------------------------------------------------------------------
-      # 4. Init DagsHub tracking URI (set MLFLOW_TRACKING_URI)
+      # 4. Verifikasi DagsHub tracking URI aktif
       # ------------------------------------------------------------------
-      - name: Configure DagsHub MLflow tracking URI
+      - name: Verify MLflow tracking URI
         run: |
           python - <<'EOF'
-          import dagshub, os
-          owner = os.environ["DAGSHUB_REPO_OWNER"]
-          name  = os.environ["DAGSHUB_REPO_NAME"]
-          token = os.environ["DAGSHUB_TOKEN"]
-          os.environ["MLFLOW_TRACKING_USERNAME"] = owner
-          os.environ["MLFLOW_TRACKING_PASSWORD"] = token
-          dagshub.init(repo_owner=owner, repo_name=name, mlflow=True)
-          import mlflow
-          uri = mlflow.get_tracking_uri()
-          print(f"MLFLOW_TRACKING_URI={uri}")
-          # Write to GITHUB_ENV so subsequent steps inherit
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"MLFLOW_TRACKING_URI={uri}\n")
+          import mlflow, os
+          uri = os.environ.get("MLFLOW_TRACKING_URI", "not set")
+          user = os.environ.get("MLFLOW_TRACKING_USERNAME", "not set")
+          print(f"Tracking URI : {uri}")
+          print(f"Username     : {user}")
+          print(f"Password set : {'yes' if os.environ.get('MLFLOW_TRACKING_PASSWORD') else 'NO - check DAGSHUB_TOKEN secret'}")
           EOF
 
       # ------------------------------------------------------------------
