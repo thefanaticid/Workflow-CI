@@ -94,19 +94,32 @@ jobs:
           echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
           echo "Captured Run ID: ${RUN_ID}"
 
-      # ------------------------------------------------------------------
-      # 6. Upload MLflow artifacts ke GitHub
-      # ------------------------------------------------------------------
-      - name: Upload MLflow artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: mlflow-artifacts-${{ github.run_number }}
-          path: mlruns/
-          retention-days: 30
-          if-no-files-found: warn
+          # Simpan ringkasan run sebagai file untuk di-upload
+          mkdir -p run_summary
+          cat > run_summary/run_info.json << JSONEOF
+          {
+            "run_id": "${RUN_ID}",
+            "experiment": "california-housing-ci",
+            "dagshub_url": "https://dagshub.com/thefanaticid/Workflow-CI",
+            "model_uri": "runs:/${RUN_ID}/model",
+            "github_run": "${{ github.run_number }}"
+          }
+          JSONEOF
+          echo "Run summary written."
 
       # ------------------------------------------------------------------
-      # 7. Build Docker image dari model MLflow
+      # 6. Upload run summary ke GitHub (log di DagsHub, summary di sini)
+      # ------------------------------------------------------------------
+      - name: Upload run summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlflow-run-summary-${{ github.run_number }}
+          path: run_summary/
+          retention-days: 30
+          if-no-files-found: error
+
+      # ------------------------------------------------------------------
+      # 7. Build Docker image dari model MLflow (download dari DagsHub)
       # ------------------------------------------------------------------
       - name: Build Docker image
         run: |
@@ -114,10 +127,10 @@ jobs:
           IMAGE_NAME="thefanaticid/california-housing-gbr"
           echo "Building Docker image: ${IMAGE_NAME}"
           echo "From run: runs:/${RUN_ID}/model"
+          # Tanpa --enable-mlserver: pakai pyfunc server default (Python 3.10+ compatible)
           mlflow models build-docker \
             -m "runs:/${RUN_ID}/model" \
-            -n "${IMAGE_NAME}" \
-            --enable-mlserver
+            -n "${IMAGE_NAME}"
 
       # ------------------------------------------------------------------
       # 8. Login & Push Docker Hub
